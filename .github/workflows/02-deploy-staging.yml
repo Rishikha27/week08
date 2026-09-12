@@ -20,29 +20,36 @@ jobs:
     environment:
       name: staging
 
-    services:
-      postgres:
-        image: postgres:16
-
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: ${{ matrix.database }}
-
-        ports:
-          - ${{ matrix.port }}:5432
-
-        options: >-
-          --health-cmd="pg_isready -U postgres -d ${{ matrix.database }}"
-          --health-interval=5s
-          --health-timeout=5s
-          --health-retries=10
-
     steps:
       - name: Checkout tested commit
         uses: actions/checkout@v4
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Validate required deployment secrets
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          DEFAULT_ADMIN_USERNAME: ${{ secrets.DEFAULT_ADMIN_USERNAME }}
+          DEFAULT_ADMIN_EMAIL: ${{ secrets.DEFAULT_ADMIN_EMAIL }}
+          DEFAULT_ADMIN_PASSWORD: ${{ secrets.DEFAULT_ADMIN_PASSWORD }}
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
+        run: |
+          for secret_name in \
+            POSTGRES_USER \
+            POSTGRES_PASSWORD \
+            JWT_SECRET_KEY \
+            DEFAULT_ADMIN_USERNAME \
+            DEFAULT_ADMIN_EMAIL \
+            DEFAULT_ADMIN_PASSWORD \
+            AZURE_STORAGE_CONNECTION_STRING
+          do
+            if [ -z "${!secret_name}" ]; then
+              echo "::error::Required secret $secret_name is empty or unavailable."
+              exit 1
+            fi
+          done
 
       - name: Login to Azure
         uses: azure/login@v3
@@ -63,32 +70,54 @@ jobs:
             -o yaml | kubectl apply -f -
 
       - name: Create PostgreSQL secret
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
         run: |
           kubectl create secret generic postgres-secret \
             --namespace staging \
-            --from-literal=POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
-            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            --from-literal=POSTGRES_USER="$POSTGRES_USER" \
+            --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
             --dry-run=client \
             -o yaml | kubectl apply -f -
 
       - name: Create application secret
+        env:
+          POSTGRES_USER: ${{ secrets.POSTGRES_USER }}
+          POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD }}
+          JWT_SECRET_KEY: ${{ secrets.JWT_SECRET_KEY }}
+          DEFAULT_ADMIN_USERNAME: ${{ secrets.DEFAULT_ADMIN_USERNAME }}
+          DEFAULT_ADMIN_EMAIL: ${{ secrets.DEFAULT_ADMIN_EMAIL }}
+          DEFAULT_ADMIN_PASSWORD: ${{ secrets.DEFAULT_ADMIN_PASSWORD }}
+          AZURE_STORAGE_CONNECTION_STRING: ${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}
         run: |
           kubectl create secret generic application-secret \
             --namespace staging \
-            --from-literal=POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
-            --from-literal=POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
-            --from-literal=JWT_SECRET_KEY="${{ secrets.JWT_SECRET_KEY }}" \
-            --from-literal=DEFAULT_ADMIN_USERNAME="${{ secrets.DEFAULT_ADMIN_USERNAME }}" \
-            --from-literal=DEFAULT_ADMIN_EMAIL="${{ secrets.DEFAULT_ADMIN_EMAIL }}" \
-            --from-literal=DEFAULT_ADMIN_PASSWORD="${{ secrets.DEFAULT_ADMIN_PASSWORD }}" \
-            --from-literal=AZURE_STORAGE_CONNECTION_STRING="${{ secrets.AZURE_STORAGE_CONNECTION_STRING }}" \
+            --from-literal=POSTGRES_USER="$POSTGRES_USER" \
+            --from-literal=POSTGRES_PASSWORD="$POSTGRES_PASSWORD" \
+            --from-literal=JWT_SECRET_KEY="$JWT_SECRET_KEY" \
+            --from-literal=DEFAULT_ADMIN_USERNAME="$DEFAULT_ADMIN_USERNAME" \
+            --from-literal=DEFAULT_ADMIN_EMAIL="$DEFAULT_ADMIN_EMAIL" \
+            --from-literal=DEFAULT_ADMIN_PASSWORD="$DEFAULT_ADMIN_PASSWORD" \
+            --from-literal=AZURE_STORAGE_CONNECTION_STRING="$AZURE_STORAGE_CONNECTION_STRING" \
             --dry-run=client \
             -o yaml | kubectl apply -f -
 
       - name: Apply Kubernetes manifests
         run: |
-          kubectl apply \
-            -f kubernetes/staging/
+          kubectl apply -f kubernetes/staging/
+
+      - name: Restart PostgreSQL deployments
+        run: |
+          for db in user-db student-db lecturer-db course-db enrollment-db; do
+            kubectl rollout restart deployment/$db -n staging
+          done
+
+      - name: Wait for PostgreSQL rollouts
+        run: |
+          for db in user-db student-db lecturer-db course-db enrollment-db; do
+            kubectl rollout status deployment/$db -n staging --timeout=300s
+          done
 
       - name: Update frontend image
         run: |
@@ -128,42 +157,31 @@ jobs:
 
       - name: Wait for frontend rollout
         run: |
-          kubectl rollout status deployment/frontend \
-            -n staging \
-            --timeout=300s
+          kubectl rollout status deployment/frontend -n staging --timeout=300s
 
       - name: Wait for user-service rollout
         run: |
-          kubectl rollout status deployment/user-service \
-            -n staging \
-            --timeout=300s
+          kubectl rollout status deployment/user-service -n staging --timeout=300s
 
       - name: Wait for student-service rollout
         run: |
-          kubectl rollout status deployment/student-service \
-            -n staging \
-            --timeout=300s
+          kubectl rollout status deployment/student-service -n staging --timeout=300s
 
       - name: Wait for lecturer-service rollout
         run: |
-          kubectl rollout status deployment/lecturer-service \
-            -n staging \
-            --timeout=300s
+          kubectl rollout status deployment/lecturer-service -n staging --timeout=300s
 
       - name: Wait for course-service rollout
         run: |
-          kubectl rollout status deployment/course-service \
-            -n staging \
-            --timeout=300s
+          kubectl rollout status deployment/course-service -n staging --timeout=300s
 
       - name: Wait for enrollment-service rollout
         run: |
-          kubectl rollout status deployment/enrollment-service \
-            -n staging \
-            --timeout=300s
+          kubectl rollout status deployment/enrollment-service -n staging --timeout=300s
 
       - name: Show staging resources
         run: |
           kubectl get pods -n staging
           kubectl get services -n staging
+          kubectl get endpoints -n staging
           kubectl get pvc -n staging
