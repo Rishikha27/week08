@@ -113,9 +113,9 @@ jobs:
             kubectl patch deployment "$db" \
               --namespace staging \
               --type merge \
-              -p '{"spec":{"strategy":{"type":"Recreate"}}}'
+              -p '{"spec":{"strategy":{"type":"Recreate","rollingUpdate":null}}}'
           done
-
+          
       - name: Restart PostgreSQL deployments
         run: |
           for db in user-db student-db lecturer-db course-db enrollment-db; do
