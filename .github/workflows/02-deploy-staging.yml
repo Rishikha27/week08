@@ -107,16 +107,25 @@ jobs:
         run: |
           kubectl apply -f kubernetes/staging/
 
+      - name: Configure PostgreSQL update strategy
+        run: |
+          for db in user-db student-db lecturer-db course-db enrollment-db; do
+            kubectl patch deployment "$db" \
+              --namespace staging \
+              --type merge \
+              -p '{"spec":{"strategy":{"type":"Recreate"}}}'
+          done
+
       - name: Restart PostgreSQL deployments
         run: |
           for db in user-db student-db lecturer-db course-db enrollment-db; do
-            kubectl rollout restart deployment/$db -n staging
+            kubectl rollout restart deployment/"$db" -n staging
           done
 
       - name: Wait for PostgreSQL rollouts
         run: |
           for db in user-db student-db lecturer-db course-db enrollment-db; do
-            kubectl rollout status deployment/$db -n staging --timeout=300s
+            kubectl rollout status deployment/"$db" -n staging --timeout=300s
           done
 
       - name: Update frontend image
