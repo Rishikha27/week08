@@ -5,10 +5,9 @@ on:
   push:
     branches:
       - main
-  
-  # Manual trigger for the workflow
-  workflow_dispatch:
 
+  # Manual trigger
+  workflow_dispatch:
 
 jobs:
 
@@ -101,7 +100,6 @@ jobs:
         run: |
           pytest -v
 
-
   # =========================================================
   # Build and Push Docker Images
   # =========================================================
@@ -109,11 +107,9 @@ jobs:
     name: Build and Push ${{ matrix.image }}
     runs-on: ubuntu-latest
 
-    # All backend tests must pass before this job starts
     needs:
       - backend-test
 
-    # Build and push when code is pushed to main or manually triggered
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
     strategy:
@@ -151,16 +147,16 @@ jobs:
 
       - name: Login to Azure Container Registry
         run: |
-          az acr login --name ${{ vars.ACR_NAME }}
+          az acr login --name riyaweek08acrix1t71
 
       - name: Build Docker image
         run: |
           docker build \
             --platform linux/amd64 \
-            -t ${{ vars.ACR_LOGIN_SERVER }}/${{ matrix.image }}:${{ github.sha }} \
+            -t riyaweek08acrix1t71.azurecr.io/${{ matrix.image }}:${{ github.sha }} \
             ./${{ matrix.service }}
 
       - name: Push Docker image with commit SHA
         run: |
           docker push \
-            ${{ vars.ACR_LOGIN_SERVER }}/${{ matrix.image }}:${{ github.sha }}
+            riyaweek08acrix1t71.azurecr.io/${{ matrix.image }}:${{ github.sha }}
