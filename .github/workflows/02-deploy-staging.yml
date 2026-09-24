@@ -245,7 +245,7 @@ jobs:
       - name: Verify Prometheus has collected staging pod metrics
         run: |
           kubectl port-forward -n monitoring \
-            svc/sit722-monitoring-kube-prometheus-prometheus 9090:9090 > /tmp/sit722-prometheus-forward.log 2>&1 &
+            svc/sit722-monitoring-kube-pro-prometheus 9090:9090 > /tmp/sit722-prometheus-forward.log 2>&1 &
           forward_pid=$!
           trap 'kill "$forward_pid" 2>/dev/null || true' EXIT
           for attempt in $(seq 1 30); do
