@@ -6,10 +6,49 @@ on:
     branches:
       - main
 
+  pull_request:
+    branches:
+      - main
+
   # Manual trigger
   workflow_dispatch:
 
 jobs:
+
+  # =========================================================
+  # Validate Week 08 Terraform before image publishing
+  # =========================================================
+  terraform-validate:
+    name: Validate Terraform
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v4
+
+      - name: Check Terraform formatting
+        run: terraform fmt -check
+
+      - name: Initialize providers without changing local state
+        run: terraform init -backend=false -input=false
+
+      - name: Validate Terraform configuration
+        run: terraform validate -no-color
+
+      - name: Login to Azure for infrastructure workflow on main
+        if: github.event_name != 'pull_request'
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Verify Azure context
+        if: github.event_name != 'pull_request'
+        run: az account show --query '{name:name,id:id}' -o json
 
   # =========================================================
   # Backend Tests
@@ -109,6 +148,7 @@ jobs:
 
     needs:
       - backend-test
+      - terraform-validate
 
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
