@@ -194,3 +194,71 @@ jobs:
           kubectl get services -n staging
           kubectl get endpoints -n staging
           kubectl get pvc -n staging
+
+  deploy-monitoring:
+    name: Deploy Prometheus and Grafana
+    runs-on: ubuntu-latest
+    needs: deploy-staging
+    environment:
+      name: staging
+    steps:
+      - name: Checkout tested commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Login to Azure
+        uses: azure/login@v3
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ vars.AKS_RESOURCE_GROUP }} \
+            --name ${{ vars.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.0
+        with:
+          version: v3.18.4
+
+      - name: Install or upgrade AKS monitoring
+        run: |
+          helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+          helm repo update prometheus-community
+          helm upgrade --install sit722-monitoring prometheus-community/kube-prometheus-stack \
+            --namespace monitoring --create-namespace \
+            --version 91.4.0 \
+            --values monitoring/values.yaml \
+            --wait --timeout 10m
+
+      - name: Provision KoalaTech staging dashboard
+        run: |
+          kubectl apply -f monitoring/dashboard.yaml
+          kubectl rollout status deployment/sit722-monitoring-grafana \
+            --namespace monitoring --timeout=300s
+          kubectl get pods,services --namespace monitoring
+          kubectl get configmap koalatech-staging-dashboard --namespace monitoring
+
+      - name: Verify Prometheus has collected staging pod metrics
+        run: |
+          kubectl port-forward -n monitoring \
+            svc/sit722-monitoring-kube-prometheus-prometheus 9090:9090 > /tmp/sit722-prometheus-forward.log 2>&1 &
+          forward_pid=$!
+          trap 'kill "$forward_pid" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 30); do
+            response=$(curl -fsS -G --data-urlencode \
+              'query=kube_pod_info{namespace="staging"}' \
+              http://127.0.0.1:9090/api/v1/query || true)
+            if [ -n "$response" ] && \
+               echo "$response" | jq -e '.status == "success" and (.data.result | length > 0)' > /dev/null; then
+              echo "$response" | jq -r '.data.result[] | .metric.pod' | sort -u
+              echo "Prometheus has collected staging pod metrics."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::No staging pod metrics appeared in Prometheus."
+          exit 1
