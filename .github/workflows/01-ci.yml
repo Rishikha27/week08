@@ -140,6 +140,46 @@ jobs:
           pytest -v
 
   # =========================================================
+  # Scan the remediated user-service image before any registry push
+  # =========================================================
+  docker-scout:
+    name: Scan user-service with Docker Scout
+    runs-on: ubuntu-latest
+    needs:
+      - backend-test
+      - terraform-validate
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Require Docker Hub Scout credentials
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          if [ -z "$DOCKERHUB_USERNAME" ] || [ -z "$DOCKERHUB_TOKEN" ]; then
+            echo "::error::Set DOCKERHUB_USERNAME and DOCKERHUB_TOKEN repository secrets."
+            exit 1
+          fi
+
+      - name: Build user-service for the AKS architecture
+        run: docker build --platform linux/amd64 -t sit722-user-service:ci ./user-service
+
+      - name: Verify fixed application dependency is installed
+        run: |
+          docker run --rm sit722-user-service:ci python -c \
+            'from importlib.metadata import version; assert version("python-multipart") == "0.0.30"'
+
+      - name: Docker Scout CVEs and base image recommendations
+        uses: docker/scout-action@v1
+        with:
+          command: cves,recommendations
+          image: local://sit722-user-service:ci
+          dockerhub-user: ${{ secrets.DOCKERHUB_USERNAME }}
+          dockerhub-password: ${{ secrets.DOCKERHUB_TOKEN }}
+          write-comment: false
+
+  # =========================================================
   # Build and Push Docker Images
   # =========================================================
   build-and-push:
@@ -149,6 +189,7 @@ jobs:
     needs:
       - backend-test
       - terraform-validate
+      - docker-scout
 
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
 
