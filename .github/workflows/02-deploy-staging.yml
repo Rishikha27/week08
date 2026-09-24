@@ -228,7 +228,7 @@ jobs:
           helm repo update prometheus-community
           helm upgrade --install sit722-monitoring prometheus-community/kube-prometheus-stack \
             --namespace monitoring --create-namespace \
-            --version 91.5.1 \
+            --version 91.4.0 \
             --values monitoring/values.yaml \
             --wait --timeout 10m
 
